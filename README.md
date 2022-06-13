@@ -45,4 +45,5 @@ conda activate hspy_environment
 
 # Contributors
 UW DIRECT Capstone Group Members - Yifei He, Jiayi Li, Ryan Littrell
+
 Supervisors and Mentors: Steven R. Spurgeon, Sarah Akers, Christina Doty
