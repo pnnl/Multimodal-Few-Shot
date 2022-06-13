@@ -26,19 +26,23 @@ The implementation, from input vector construction, few-shot learning model to t
 
 
 # Download Git Repository
+```
 git clone git@github.com:SMMA-PNNL-2022/SMMA.git
-
-
-# Install Required Packages
-Hyperspy, 
-Matplotlib, 
-Pytorch, 
-Glob, 
-Numpy.
+```
 
 # Create Environment
+```
 conda create -n hspy_environment
 conda activate hspy_environment 
+```
 
-# Group Members - Yifei He, Jiayi Li, Ryan Littrell
-Supervisors and Mentors: Steven R. Spurgeon, Sarah Akers, Chirsina Doty
+# Install Required Packages
+- Hyperspy
+- Matplotlib 
+- Pytorch 
+- Glob 
+- Numpy
+
+# Contributors
+UW DIRECT Capstone Group Members - Yifei He, Jiayi Li, Ryan Littrell
+Supervisors and Mentors: Steven R. Spurgeon, Sarah Akers, Christina Doty
