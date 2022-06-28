@@ -3,13 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-
-#in SMMA 
-data/pixel brightness.npy
-data/pixel spectrum.npy
-
-
-
 # C extensions
 *.so
 
