@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+#in smma
+data
+data.zip
+*.npy
+
+
 # C extensions
 *.so
 
