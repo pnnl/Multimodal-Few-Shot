@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # in smma
-data
+#data
 data.zip
 *.npy
 
