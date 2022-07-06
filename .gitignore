@@ -5,7 +5,7 @@ __pycache__/
 
 # in smma
 #data
-data.zip
+#data.zip
 *.npy
 
 # C extensions
