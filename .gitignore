@@ -9,6 +9,7 @@ __pycache__/
 Images
 npy_files
 raw_data
+Testing
 *.npy
 
 # C extensions
