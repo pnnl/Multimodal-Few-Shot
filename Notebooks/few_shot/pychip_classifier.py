@@ -33,14 +33,14 @@ class PychipClassifier:
     within the pipeline of the few-shot predictions as well as several important
     attributes of the image and in a future, image metadata. """
 
-    def __init__(self, data_path, img_name, spectra_name, **kwargs): # Added
+    def __init__(self, data_path, img_name, spectra_name, **kwargs): # Added # Added an input for finding the file containing the spectral data
         path_to_img = os.path.join(data_path, img_name)
-        path_to_spectra = os.path.join(data_path, spectra_name) # Added
+        path_to_spectra = os.path.join(data_path, spectra_name) # Added # Finds the file path to the spectral data
         # Image metadata
         self.directory = data_path
         self.img_name = img_name
-        self.spectra_name = spectra_name # Added
-        self.spectra = np.load(path_to_spectra, allow_pickle=True) # Added
+        self.spectra_name = spectra_name # Added # Metadata for spectra location
+        self.spectra = np.load(path_to_spectra, allow_pickle=True) # Added # Loading the .npy spectra data
         if 'image' in kwargs:
             print("an image was passed in directly")
             pil_image = kwargs['image']
@@ -234,19 +234,20 @@ class PychipClassifier:
         # Getting the parameters and creating the chips/spectra dictionary
         self.parameters(num_cols)
         self.chips = {}
-        self.chips_spectra = {} # Added
-        norm = Softmax(dim=0) # Added
+        self.chips_spectra = {} # Added # A new disctionary for containing the summed spectra for each chip
+        norm = Softmax(dim=0) # Added # Experimenting with normalizing the spectra to clear up the peaks
 
         # Creating the chips also sum up the spectra for each chip
         # self.grid_points.append((x_coord, y_coord, row_idx, col_idx))
         for x, y, R_idx, C_idx in self.grid_points:
             name = f"R{R_idx}C{C_idx}"  # Naming convention for the chips
             self.chips[name] = self.img[y:y + self.chip_size, x:x + self.chip_size]
-            spectral_sum = np.sum(self.spectra[y:y + self.chip_size, x:x + self.chip_size, 151:800], axis = (0,1)) # Added
-            self.chips_spectra[name] = torch.from_numpy(spectral_sum.astype(float)) # Added
-            self.chips_spectra[name] = norm(self.chips_spectra[name])
-            #for i in range(len(self.chips_spectra[name])): # Added
-            #    if (self.chips_spectra[name][i] <= 1): # Added
+            spectral_sum = np.sum(self.spectra[y:y + self.chip_size, x:x + self.chip_size, 151:800], axis = (0,1)) # Added 
+            # Added # Summing part of the spectra for each chip, the 151:800 is not meaningful, just experimental to reduce extra data processing
+            self.chips_spectra[name] = torch.from_numpy(spectral_sum.astype(float)) # Added # Converting the numpy spectral data to tensor
+            self.chips_spectra[name] = norm(self.chips_spectra[name]) # Experimental normalization of spectra
+            #for i in range(len(self.chips_spectra[name])): # Added # These lines are all just a clean up I was testing for the 
+            #    if (self.chips_spectra[name][i] <= 1): # Added # spectra. Just removing any single counts
             #        self.chips_spectra[name][i] = 0 # Added
 
 
@@ -296,7 +297,7 @@ class PychipClassifier:
                 It is returned to be able to implement the method cascading."""
 
         support_set = []
-        support_spectra = {} # Added
+        support_spectra = {} # Added # A dictionary for the chipped spectra associated with the support set
 
         # Using an already existing support set
         # Added # I have not updated this to function multimodally with a preexisting support set # Added
@@ -311,12 +312,12 @@ class PychipClassifier:
         # Creating a support set
         elif support_dict:
             for label in support_dict:
-                support_spectra[label] = torch.zeros(self.chips_spectra[support_dict[label][0]].shape) # Added
+                support_spectra[label] = torch.zeros(self.chips_spectra[support_dict[label][0]].shape) # Added # Making a tensor to sum supports to
                 for chip_name in support_dict[label]:
                     image = PychipClassifier.cv2_to_PIL(self.chips[chip_name])
                     support_set.append([image, label, chip_name])
-                    support_spectra[label] = self.chips_spectra[chip_name].add(support_spectra[label]) # Added
-                support_spectra[label] = support_spectra[label] / len(support_dict[label]) # Added
+                    support_spectra[label] = self.chips_spectra[chip_name].add(support_spectra[label]) # Added # Summing the spectral support chips
+                support_spectra[label] = support_spectra[label] / len(support_dict[label]) # Added # Averaging the support chips for each class
 
         # Raising an error if the path and the dict are not given
         else:
@@ -324,7 +325,7 @@ class PychipClassifier:
 
         # Turning the support set into a pandas dataframe.
         self.support_set = pd.DataFrame(support_set, columns=['images', 'labels', 'filename'])
-        self.support_spectra = support_spectra # Added
+        self.support_spectra = support_spectra # Added # Saving the support spectra to the class
 
         return self
 
@@ -410,7 +411,7 @@ class PychipClassifier:
             for i, q in enumerate(query_loader):
                 # q[0] is a stack of image data q[1] can be ignored
                 print("Computing batch %s" % str(i))
-                output = model(stacked_support_set, q[0], self.support_spectra, self.chips_spectra, q[2]) # Added
+                output = model(stacked_support_set, q[0], self.support_spectra, self.chips_spectra, q[2]) # Added # Passing all of the spectral information to the model
                 probabilities = norm(output)
                 output_probabilities.append(probabilities)
                 fnames.append(q[2])
