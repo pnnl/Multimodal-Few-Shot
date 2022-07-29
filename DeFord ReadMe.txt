@@ -6,7 +6,7 @@ You will probably have to update some of the file paths before you run anything 
 unecessary things. Everything is contained in the Notebooks folder. I've deleted everything that isn't being used.
 Also, you can find the .emd data I was using in my teams channel under files in a folder named "raw_data". "few-shot" 
 contains modules and python code. "Testing" contains processed data and saved information. "Testing/multimodal1" is
-the only folder I added to. The rest is just a copy from pyChip.
+the only folder I added to.
 
 Capstone Code
 Basically everything the capstone group used has been tossed. The only thing I'm still using is a couple of lines 
