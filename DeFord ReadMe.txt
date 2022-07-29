@@ -46,3 +46,6 @@ saved and passed in ready to use. As far as making it work goes, sometimes it wo
 didn't have enough time at the end to be very systematic about it. I think the key is in the way the spectral data 
 is processed. I think important insights into what is needed will be found by seeing how the spectral data performs
 by itself.
+
+Lastly, thank you all so much for giving me this experience. It has been wonderful working with you all and I have 
+appreciated your help and guidance so much. I wish you all the best and I hope to work with you again soon!
