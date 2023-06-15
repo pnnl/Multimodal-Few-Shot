@@ -11,35 +11,39 @@ import pandas as pd
 import torch
 from torch.nn import Softmax, Identity
 from torch.utils.data import DataLoader
+import torch.utils.model_zoo as model_zoo
 from torchvision.transforms.functional import resize
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset
-from few_shot.protonet import PrototypicalNet, MultimodalPrototypicalNet
-from few_shot.resnet import resnet18, resnet34, resnet50, resnet101, resnet152
-from few_shot.custom_colors import create_overlay
+from .protonet import PrototypicalNet, MultimodalPrototypicalNet
+from .resnet import resnet18, resnet34, resnet50, resnet101, resnet152
+from .custom_colors import create_overlay
 import torchvision.models as models
-from sklearn.preprocessing import MinMaxScaler
+import pretrained_microscopy_models as pmm
+from custom_colors import save_stats_plot
+from torch import nn
 
 
-''' It seems cv2 is faster than PIL (https://towardsdatascience.com/image-processing-opencv-vs-pil-a26e9923cdf3)
+""" It seems cv2 is faster than PIL (https://towardsdatascience.com/image-processing-opencv-vs-pil-a26e9923cdf3)
 and cv2 can work with live videos which will be useful in the future. This is the reason for the selection of 
  the cv2 module over the PIL module. But, pytorch works with PIL hence that's why there is a need for conversion 
  from cv2 to PIL around the code. however, cv2 apparently is difficult to install on the machine, so we might want to 
- use PIL instead.'''
+ use PIL instead."""
+
 
 class PychipClassifier:
-    """ This class is responsible for containing all the methods that are used
+    """This class is responsible for containing all the methods that are used
     within the pipeline of the few-shot predictions as well as several important
-    attributes of the image and in a future, image metadata. """
+    attributes of the image and in a future, image metadata."""
 
     def __init__(self, data_path, img_name, **kwargs):
         path_to_img = os.path.join(data_path, img_name)
         # Image metadata
         self.directory = data_path
         self.img_name = img_name
-        if 'image' in kwargs:
+        if "image" in kwargs:
             print("an image was passed in directly")
-            pil_image = kwargs['image']
+            pil_image = kwargs["image"]
             self.img_og = np.asarray(pil_image)
             # the torch models we use require the input to have 3 channels. if there is only 1, we make more:
             if len(self.img_og.shape) == 2:
@@ -50,14 +54,14 @@ class PychipClassifier:
                 self.img = for_torch
             else:
                 self.img = np.asarray(pil_image)
-        if 'eds' in kwargs:
-            if kwargs['eds'] is not None:
+        if "eds" in kwargs:
+            if kwargs["eds"] is not None:
                 # bring in spectra and save as self.eds
-                assert isinstance(kwargs['eds'], np.ndarray)
-                self.eds = kwargs['eds']
+                assert isinstance(kwargs["eds"], np.ndarray)
+                self.eds = kwargs["eds"]
             else:
                 self.eds = None
-        #else:
+        # else:
         # TODO: figure out img vs img_og. currently img is being used for most things, but it is not the
         #   greyscale image
         # Image read as grayscale
@@ -69,8 +73,8 @@ class PychipClassifier:
 
     # TODO: Make it work with the 3 channels img cv2 (PRF)
     # TODO: Perhaps try implement the albumentations preprocessing module since it seems it has a lot to add (PRF)
-    def preprocess(self, prep_type, savepath='', img_name='', **kwargs):
-        """ This method is the responsible on for preprocessing the image.
+    def preprocess(self, prep_type, savepath="", img_name="", **kwargs):
+        """This method is the responsible on for preprocessing the image.
 
         The method takes in a string that indicates the type of preprocessing
         to the image. If the savepath and img_name parameters are given then
@@ -100,31 +104,36 @@ class PychipClassifier:
                 It is returned to be able to implement the method
                 cascading."""
 
-        if prep_type == 'CLAHE':
+        if prep_type == "CLAHE":
             if "clipLimit" in kwargs:
                 clip_limit = kwargs["clipLimit"]
             else:
-                print("clipLimit not provided for CLAHE preprocess - using default value: 1.0")
+                print(
+                    "clipLimit not provided for CLAHE preprocess - using default value: 1.0"
+                )
                 clip_limit = 1.0
             if "tileGridSize" in kwargs:
                 tile_grid_size = kwargs["tileGridSize"]
             else:
-                print("tileGridSize not provided for CLAHE preprocess - using default value: (8,8)")
+                print(
+                    "tileGridSize not provided for CLAHE preprocess - using default value: (8,8)"
+                )
                 tile_grid_size = (8, 8)
             clahe = cv2.createCLAHE(clip_limit, tile_grid_size)
             # gray_img = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
             # using og because it is greyscale (read in with color_flag=0)
 
             # for color images (will need to be read in differently) (untested)
-            print(self.img.shape)
+            if not isinstance(self.img.flat[0], np.uint8):
+                print("cv2 requires different datatype, converting to uint8")
+                self.img = self.img.astype(np.uint8)
             hsv_img = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
-            hsv_planes = cv2.split(hsv_img)
-            hsv_planes[2] = clahe.apply(hsv_planes[2])
-            hsv = cv2.merge(hsv_planes)
+            h, s, v = cv2.split(hsv_img)
+            v = clahe.apply(v)
+            hsv = cv2.merge([h, s, v])
             self.img = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
             # self.img = clahe.apply(self.img)
             print(self.img.shape)
-
 
             # saving the preprocessed image if a non empty string passed to savepath
             if savepath == "":
@@ -138,7 +147,7 @@ class PychipClassifier:
         return self
 
     def parameters(self, num_cols, crop=True):
-        """ Extracts some important parameters of the image.
+        """Extracts some important parameters of the image.
 
         This method extracts several important parameters of the image and
         stores the in the following attributes: height, width, chip_size,
@@ -176,21 +185,27 @@ class PychipClassifier:
         self.grid_points = []
 
         # Filling the grid_points. This is used when creating the chips.
-        for col_idx, x_coord in enumerate(range(0, self.width - self.pixels_ignored_in_x, self.chip_size)):
-            for row_idx, y_coord in enumerate(range(0, self.height - self.pixels_ignored_in_y, self.chip_size)):
+        for col_idx, x_coord in enumerate(
+            range(0, self.width - self.pixels_ignored_in_x, self.chip_size)
+        ):
+            for row_idx, y_coord in enumerate(
+                range(0, self.height - self.pixels_ignored_in_y, self.chip_size)
+            ):
                 self.grid_points.append((x_coord, y_coord, row_idx, col_idx))
 
         # Cropping the image of desired.
         if crop:
             # this may only work if grey
-            self.img = self.img[0:self.height - self.pixels_ignored_in_y,
-                                0:self.width - self.pixels_ignored_in_x]
+            self.img = self.img[
+                0 : self.height - self.pixels_ignored_in_y,
+                0 : self.width - self.pixels_ignored_in_x,
+            ]
 
         return self
 
     @staticmethod
     def cv2_to_PIL(cv2_img):
-        """ Auxilliary method to convert the cv2 images into PIL
+        """Auxilliary method to convert the cv2 images into PIL
         images.
 
         Parameters:
@@ -209,8 +224,8 @@ class PychipClassifier:
 
     # TODO: Eliminate the chips dictionary and just leave the query_set pandas data frame.
     #  Do the pertinent fixes around the code (PRF).
-    def chips_genesis(self, num_cols, savepath='', imgs_ext=''):
-        """ Method used to create the chips.
+    def chips_genesis(self, num_cols, savepath="", imgs_ext=""):
+        """Method used to create the chips.
 
         The method takes in the number of columns into which the imaged is
         going to be segmented and then creates the chips. If desired, one can
@@ -232,7 +247,7 @@ class PychipClassifier:
         Returns:
             self: (object)
                 It is returned to be able to implement the method
-                cascading. """
+                cascading."""
 
         # Getting the parameters and creating the chips dictionary
         self.parameters(num_cols)
@@ -243,13 +258,13 @@ class PychipClassifier:
         # self.grid_points.append((x_coord, y_coord, row_idx, col_idx))
         for x, y, R_idx, C_idx in self.grid_points:
             name = f"R{R_idx}C{C_idx}"  # Naming convention for the chips
-            self.chips[name] = self.img[y:y + self.chip_size, x:x + self.chip_size]
+            self.chips[name] = self.img[y : y + self.chip_size, x : x + self.chip_size]
             if self.eds is not None:
-                raw_averaged_spectrum = self.eds[y:y + self.chip_size, x:x + self.chip_size, ].sum(axis=(0, 1),
-                                                                                                   dtype='float64')
+                raw_averaged_spectrum = self.eds[
+                    y : y + self.chip_size,
+                    x : x + self.chip_size,
+                ].sum(axis=(0, 1), dtype="float64")
                 self.eds_chips[name] = raw_averaged_spectrum
-
-
 
         # Creating the query_set (the chips to be classified)
         img_chips = []
@@ -259,19 +274,21 @@ class PychipClassifier:
                 # print('chips genesis, before cv2_to tensor, size:', self.chips[chip_name].shape)
                 image = PychipClassifier.cv2_to_PIL(self.chips[chip_name])
                 # print('chips genesis, after cv2_to tensor, size:', image.size())
-                img_chips.append([image, 'no-label-yet', chip_name])
+                img_chips.append([image, "no-label-yet", chip_name])
                 eds_chips.append([torch.from_numpy(self.eds_chips[chip_name])])
         else:
             for chip_name in self.chips:
                 # print('chips genesis, before cv2_to tensor, size:', self.chips[chip_name].shape)
                 image = PychipClassifier.cv2_to_PIL(self.chips[chip_name])
                 # print('chips genesis, after cv2_to tensor, size:', image.size())
-                img_chips.append([image, 'no-label-yet', chip_name])
+                img_chips.append([image, "no-label-yet", chip_name])
 
         # Turning the query_set into a pandas dataframe.
-        self.query_set = pd.DataFrame(img_chips, columns=['images', 'labels', 'filename'])
+        self.query_set = pd.DataFrame(
+            img_chips, columns=["images", "labels", "filename"]
+        )
         if self.eds is not None:
-            self.query_set['EDS'] = eds_chips
+            self.query_set["EDS"] = eds_chips
 
         # Saving the chips if desired
         if savepath:
@@ -283,8 +300,8 @@ class PychipClassifier:
 
     # TODO: Perhaps change the Image.fromarray() to tranform the whole stacked numpy array (PRF)
     # TODO: Add the optional functionality to save the support set when it is created. (PRF)
-    def support_genesis(self, support_dict={}, support_path=''):
-        """ Uses an existing support set or creates one.
+    def support_genesis(self, support_dict={}, support_path=""):
+        """Uses an existing support set or creates one.
 
         The method either creates a support set by using a given support dictionary
         or uses and existing support set that exists in a given directory path.
@@ -332,18 +349,26 @@ class PychipClassifier:
 
         # Raising an error if the path and the dict are not given
         else:
-            raise 'Please provide a support dictionary to create a support set or a path to an existing support set.'
+            raise Exception(
+                "Please provide a support dictionary to create a support set or a path to an existing support set."
+            )
 
         # Turning the support set into a pandas dataframe.
         if self.eds is not None:
-            self.support_set = pd.DataFrame(support_set, columns=['images', 'spectra', 'labels', 'filename'])
+            self.support_set = pd.DataFrame(
+                support_set, columns=["images", "spectra", "labels", "filename"]
+            )
         else:
-            self.support_set = pd.DataFrame(support_set, columns=['images', 'labels', 'filename'])
+            self.support_set = pd.DataFrame(
+                support_set, columns=["images", "labels", "filename"]
+            )
 
         return self
 
-    def predict(self, encoder='torch101', max_query_size=100, seed=42, savepath='', filename=''):
-        """ Makes the prediction of the label of the chips.
+    def predict(
+        self, encoder="torch101", max_query_size=100, seed=42, savepath="", filename=""
+    ):
+        """Makes the prediction of the label of the chips.
 
         The method takes in the desired encoder to use, the maximum batch size, a seed to make
         constant predictions along different runs and an optional directory path and filename to
@@ -375,25 +400,27 @@ class PychipClassifier:
 
         # Selecting the encoder
         # TODO: use the torch versions instead?
-        if encoder == 'resnet18':
+        if encoder == "resnet18":
             enkoder = resnet18(pretrained=True, place_on_device=False)
-        elif encoder == 'resnet34':
+        elif encoder == "resnet34":
             enkoder = resnet34(pretrained=True, place_on_device=False)
-        elif encoder == 'resnet50':
+        elif encoder == "resnet50":
             enkoder = resnet50(pretrained=True, place_on_device=False)
-        elif encoder == 'resnet101':
+        elif encoder == "resnet101":
             enkoder = resnet101(pretrained=True, place_on_device=False)
-        elif encoder == 'resnet152':
+        elif encoder == "resnet152":
             enkoder = resnet152(pretrained=True, place_on_device=False)
-        elif encoder == 'torch101':
+        elif encoder == "torch101":
             enkoder = models.resnet101(pretrained=True)
-        elif encoder == 'shufflenet':
+        elif encoder == "shufflenet":
             enkoder = models.shufflenet_v2_x1_0(pretrained=True)
         else:
-            raise ValueError('Encoder given not available. Available encoders are:'
-                             'resnet18, resnet34, resnet50, resnet101, resnet152.')
+            raise ValueError(
+                "Encoder given not available. Available encoders are:"
+                "resnet18, resnet34, resnet50, resnet101, resnet152."
+            )
 
-        model = PrototypicalNet(encoder=enkoder, device='cpu')
+        model = PrototypicalNet(encoder=enkoder, device="cpu")
 
         # Predicting the labels for chips and timing the prediction.
         start_time = time.time()
@@ -402,14 +429,20 @@ class PychipClassifier:
         output_probabilities = []
 
         # load the support set data
-        support_set = CustomImageDataset(self.support_set, transform=resize, size=(255, 255))
+        support_set = CustomImageDataset(
+            self.support_set, transform=resize, size=(255, 255)
+        )
         stacked_support_set = {}
 
         # get class inds
         for label in support_set.labels:
-            stacked_support_set[label] = torch.stack([x[0] for i, x in enumerate(support_set) if x[1] == label])
+            stacked_support_set[label] = torch.stack(
+                [x[0] for i, x in enumerate(support_set) if x[1] == label]
+            )
 
-        query_set = CustomImageDataset(self.query_set, transform=resize, size=(255, 255))
+        query_set = CustomImageDataset(
+            self.query_set, transform=resize, size=(255, 255)
+        )
         query_loader = DataLoader(query_set, batch_size=max_query_size)
         # construct a batches to pass to the model
         # support_set is a dictionary of stacked tensors, query_set is still a Dataset object
@@ -427,24 +460,32 @@ class PychipClassifier:
                 fnames.append(q[2])
 
         # Turning the results_multimodal into a dataframe
-        self.results = pd.DataFrame(tensor_i.tolist() for sublist in output_probabilities for tensor_i in sublist)
+        self.results = pd.DataFrame(
+            tensor_i.tolist()
+            for sublist in output_probabilities
+            for tensor_i in sublist
+        )
 
         # Assigning label names to the columns
         self.results.columns = support_set.labels
 
         # Formatting filenames for each chip
-        flat_list = [os.path.basename(item).split('.')[0] for sublist in fnames for item in sublist]
+        flat_list = [
+            os.path.basename(item).split(".")[0]
+            for sublist in fnames
+            for item in sublist
+        ]
 
         # Assigning the index row, column position in the convention of R{row_idx}C{col_idx} to the dataframe.
         self.results.index = flat_list
 
         # Creating the prediction column by comparing the max value between the labels.
-        self.results['prediction'] = self.results.idxmax(axis=1)
+        self.results["prediction"] = self.results.idxmax(axis=1)
 
         # renaming the first column 'chip'
-        #self.results_multimodal.reset_index(inplace=True)
-        #self.results_multimodal = self.results_multimodal.rename(columns={'index': 'chip'})
-        self.results['chip'] = self.results.index
+        # self.results_multimodal.reset_index(inplace=True)
+        # self.results_multimodal = self.results_multimodal.rename(columns={'index': 'chip'})
+        self.results["chip"] = self.results.index
 
         # TODO:make sure to flip any predictions of the support set that aren't consistent with the support set label
         self.total_time = time.time() - start_time
@@ -455,8 +496,17 @@ class PychipClassifier:
             self.results.to_csv(filepath)
         return self
 
-    def predict_multimodal(self, image_encoder='shufflenet', eds_encoder='raw', max_query_size=100, seed=42, savepath='', filename=''):
-        """ Makes the prediction of the label of the chips.
+    def predict_multimodal(
+        self,
+        image_encoder="shufflenet",
+        eds_encoder="raw",
+        max_query_size=100,
+        seed=42,
+        savepath="",
+        filename="",
+        cuda_device="cuda:0"
+    ):
+        """Makes the prediction of the label of the chips.
 
         The method takes in the desired encoder to use, the maximum batch size, a seed to make
         constant predictions along different runs and an optional directory path and filename to
@@ -488,33 +538,50 @@ class PychipClassifier:
         Returns:
             self: (object)
                 It is returned to be able to implement the method cascading."""
-
+        # CUDA for PyTorch
+        use_cuda = torch.cuda.is_available()
+        device = torch.device(cuda_device if use_cuda else "cpu")
         # Selecting the encoder
         # TODO: use the torch versions instead?
-        if image_encoder == 'resnet18':
-            enkoder = resnet18(pretrained=True, place_on_device=False)
-        elif image_encoder == 'resnet34':
-            enkoder = resnet34(pretrained=True, place_on_device=False)
-        elif image_encoder == 'resnet50':
-            enkoder = resnet50(pretrained=True, place_on_device=False)
-        elif image_encoder == 'resnet101':
-            enkoder = resnet101(pretrained=True, place_on_device=False)
-        elif image_encoder == 'resnet152':
-            enkoder = resnet152(pretrained=True, place_on_device=False)
-        elif image_encoder == 'torch101':
+        if image_encoder == "micronet":
+            # TODO: I hard coded shufflenet because if our encoder was set to torch101 it wouldn't work (needs to be
+            # TODO: in the format 'resnet50'... the way torch recognizes it)
+            # TODO: make so we dont have to download it every time
+            enkoder = torch.hub.load(
+                "pytorch/vision:v0.10.0", "resnet50", pretrained=False
+            )
+            url = pmm.util.get_pretrained_microscopynet_url('resnet50', 'micronet')
+            enkoder.load_state_dict(model_zoo.load_url(url, map_location=torch.device(device)))
+            # url = pmm.util.get_pretrained_microscopynet_url("resnet101", "micronet")
+            # state_dict = torch.hub.load_state_dict_from_url(url, map_location="cpu")
+            # Apply the state dict to the model
+            # enkoder.load_state_dict(state_dict)
+            enkoder.fc = nn.Flatten()
+            model = PrototypicalNet(encoder=enkoder, device=device)
+        elif image_encoder == "torch101":
             enkoder = models.resnet101(pretrained=True)
-        elif image_encoder == 'shufflenet':
+            enkoder.fc = nn.Flatten()
+            model = PrototypicalNet(encoder=enkoder, device=device)
+        elif image_encoder == "shufflenet":
             enkoder = models.shufflenet_v2_x1_0(pretrained=True)
+            enkoder.fc = nn.Flatten()
+            model = PrototypicalNet(encoder=enkoder, device=device)
         else:
-            raise ValueError('Encoder given not available. Available encoders are:'
-                             'resnet18, resnet34, resnet50, resnet101, resnet152.')
+            raise ValueError(
+                "Encoder given not available. Available encoders are:"
+                "micronet, torch101, and shufflenet"
+            )
 
         if eds_encoder == "raw":
             eds_enkoder = Identity()
-            model = MultimodalPrototypicalNet(image_encoder=enkoder, eds_encoder=eds_enkoder, device='cpu')
+            model = MultimodalPrototypicalNet(
+                image_encoder=enkoder, eds_encoder=eds_enkoder, device=device
+            )
         else:
             raise NotImplementedError
-
+        if use_cuda:
+            torch.backends.cudnn.benchmark = True
+            model.to(device)
         # Predicting the labels for chips and timing the prediction.
         start_time = time.time()
         torch.manual_seed(seed)
@@ -522,17 +589,25 @@ class PychipClassifier:
         output_probabilities = []
 
         # load the support set data
-        support_set = CustomImageDataset(self.support_set, transform=resize, size=(255, 255))
+        support_set = CustomImageDataset(
+            self.support_set, transform=resize, size=(255, 255)
+        )
         stacked_support_set = {}
 
         # get class inds
         for label in support_set.labels:
             stacked_support_set[label] = {
-                'images': torch.stack([x[0] for i, x in enumerate(support_set) if x[2] == label]),
-                'spectra': torch.stack([x[1] for i, x in enumerate(support_set) if x[2] == label])
+                "images": torch.stack(
+                    [x[0] for i, x in enumerate(support_set) if x[2] == label]
+                ).to(device),
+                "spectra": torch.stack(
+                    [x[1] for i, x in enumerate(support_set) if x[2] == label]
+                ).to(device),
             }
 
-        query_set = CustomImageDataset(self.query_set, transform=resize, size=(255, 255))
+        query_set = CustomImageDataset(
+            self.query_set, transform=resize, size=(255, 255)
+        )
         query_loader = DataLoader(query_set, batch_size=max_query_size)
         # construct a batches to pass to the model
         # support_set is a dictionary of stacked tensors, query_set is still a Dataset object
@@ -544,30 +619,40 @@ class PychipClassifier:
             for i, q in enumerate(query_loader):
                 # q[0] is a stack of image data q[1] can be ignored
                 print("Computing batch %s" % str(i))
+                if use_cuda:
+                    q[0].to(device)
                 output = model(stacked_support_set, q[0], q[1])
                 probabilities = norm(output)
                 output_probabilities.append(probabilities)
                 fnames.append(q[3])
 
         # Turning the results_multimodal into a dataframe
-        self.results = pd.DataFrame(tensor_i.tolist() for sublist in output_probabilities for tensor_i in sublist)
+        self.results = pd.DataFrame(
+            tensor_i.tolist()
+            for sublist in output_probabilities
+            for tensor_i in sublist
+        )
 
         # Assigning label names to the columns
         self.results.columns = support_set.labels
 
         # Formatting filenames for each chip
-        flat_list = [os.path.basename(item).split('.')[0] for sublist in fnames for item in sublist]
+        flat_list = [
+            os.path.basename(item).split(".")[0]
+            for sublist in fnames
+            for item in sublist
+        ]
 
         # Assigning the index row, column position in the convention of R{row_idx}C{col_idx} to the dataframe.
         self.results.index = flat_list
 
         # Creating the prediction column by comparing the max value between the labels.
-        self.results['prediction'] = self.results.idxmax(axis=1)
+        self.results["prediction"] = self.results.idxmax(axis=1)
 
         # renaming the first column 'chip'
-        #self.results_multimodal.reset_index(inplace=True)
-        #self.results_multimodal = self.results_multimodal.rename(columns={'index': 'chip'})
-        self.results['chip'] = self.results.index
+        # self.results_multimodal.reset_index(inplace=True)
+        # self.results_multimodal = self.results_multimodal.rename(columns={'index': 'chip'})
+        self.results["chip"] = self.results.index
 
         # TODO:make sure to flip any predictions of the support set that aren't consistent with the support set label
         self.total_time = time.time() - start_time
@@ -582,7 +667,7 @@ class PychipClassifier:
     # TODO: Add a legend to the image (PRF).
     # TODO: Add and error catcher (PRF)
     def color_image(self, savepath, img_name, color_dict):
-        """ Creates and saves the color labelled image. .
+        """Creates and saves the color labelled image. .
 
         This method colors the image sections according to their corresponding labels.
         Then it uses the given savepath and image name to save the color labelled image.
@@ -600,10 +685,12 @@ class PychipClassifier:
                 It is returned to be able to implement the method cascading."""
 
         # Dictionary identifying the predicted labels with integers. Also they are in order.
-        mapping = {label: idx for idx, label in enumerate(sorted(set(self.results.prediction)))}
+        mapping = {
+            label: idx for idx, label in enumerate(sorted(set(self.results.prediction)))
+        }
 
         # Creating a zeros numpy array to contain the label for each of the pixels.
-        #self.color_labels = np.zeros((self.height - self.pixels_ignored_in_y, self.width - self.pixels_ignored_in_x))
+        # self.color_labels = np.zeros((self.height - self.pixels_ignored_in_y, self.width - self.pixels_ignored_in_x))
 
         # give img_og 3 channels if they don't already exist
         if len(self.img_og.shape) == 2:
@@ -613,19 +700,52 @@ class PychipClassifier:
             new_og[:, :, 2] = self.img_og
             self.img_og = new_og
 
+        # creates a version of the output image with only one color overlaid. This is just for presentations and will
+        # only run if the following is set to true:
+        single_overlay = False
+        if single_overlay:
+            save = "results_single_overlay.jpg"
+            filepath = os.path.join(savepath, save)
+            img = self.img_og
+            height, width = img.shape[0], img.shape[1]
+            top_left = (0, 0)
+            bottom_right = (width, height)
+            bgr = (20, 20, 20)
+            alpha = 0.3
+            overlay = img.copy()
+            output = img.copy()
+            cv2.rectangle(overlay, top_left, bottom_right, bgr, -1)
+            cv2.addWeighted(overlay, alpha, output, float(1 - alpha), 0, output)
+            cv2.imwrite(filepath, output)
+        else:
+            pass
 
         # Assigning colored label sections to the image
         for x_coord, y_coord, row_idx, col_idx in self.grid_points:
             gridpoint = (x_coord, y_coord, col_idx, row_idx)
-            results_idx = f'R{row_idx}C{col_idx}'
+            results_idx = f"R{row_idx}C{col_idx}"
             label = self.results.loc[results_idx, "prediction"]
-            #self.color_labels[y_coord: y_coord + self.chip_size, x_coord: x_coord + self.chip_size] = label
+            # self.color_labels[y_coord: y_coord + self.chip_size, x_coord: x_coord + self.chip_size] = label
             bgr = color_dict[label]
             self.img_og = create_overlay(self.img_og, gridpoint, bgr, self.chip_size)
         filepath = os.path.join(savepath, img_name)
         cv2.imwrite(filepath, self.img_og)
-        #plt.imsave(filepath, color.label2rgb(self.color_labels, self.img, colors=["blue", "red"], kind='overlay'))
+        # plt.imsave(filepath, color.label2rgb(self.color_labels, self.img, colors=["blue", "red"], kind='overlay'))
+        return self
 
+    def stats_plot(self, savepath, img_name, color_dict):
+        file = self.results
+        filepath = os.path.join(savepath, img_name)
+        title = "Abundance (chip count)"
+        save_stats_plot(
+            file,
+            filepath,
+            color_dict,
+            title,
+            show_count=True,
+            show_y_axis=False,
+            bold_edges=False,
+        )
         return self
 
 
@@ -635,7 +755,7 @@ class CustomImageDataset(Dataset):
         super(CustomImageDataset, self).__init__()
 
         self.imgs_labels = image_labels
-        self.labels = image_labels['labels'].unique()
+        self.labels = image_labels["labels"].unique()
         self.transform = transform
         self.target_transform = target_transform
         self.kwargs = kwargs
@@ -652,7 +772,7 @@ class CustomImageDataset(Dataset):
             image = self.transform(image, **self.kwargs)
         if self.target_transform:
             label = self.target_transform(label)
-        if 'EDS' in self.imgs_labels:
+        if "EDS" in self.imgs_labels:
             spectra = self.imgs_labels.iloc[idx, 3]
             return image, spectra, label, filename
         else:
