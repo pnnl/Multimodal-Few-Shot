@@ -27,8 +27,8 @@ def euclidean_dist(X, Y):
 
 
 class PrototypicalNet(BaseModel):
-    def __init__(self, encoder, device='cpu'):
-        super(PrototypicalNet, self).__init__(encoder, device='cpu')
+    def __init__(self, encoder, device="cpu"):
+        super(PrototypicalNet, self).__init__(encoder, device="cpu")
         self.encoder = encoder
         self.device = device
 
@@ -37,7 +37,7 @@ class PrototypicalNet(BaseModel):
         prototypes = []
         # encode the data points
         for s_k, x_k in support_group.items():
-            #support_group[s_k] = self.encoder(x_k)
+            # support_group[s_k] = self.encoder(x_k)
             # calculate the prototype for each class
             prototypes.append(self.encoder(x_k).mean(0))
         prototypes = torch.stack(prototypes)
@@ -48,8 +48,10 @@ class PrototypicalNet(BaseModel):
 
 
 class MultimodalPrototypicalNet(MultimodalBaseModel):
-    def __init__(self, image_encoder, eds_encoder, device='cpu'):
-        super(MultimodalPrototypicalNet, self).__init__(image_encoder, eds_encoder, device='cpu')
+    def __init__(self, image_encoder, eds_encoder, device="cpu"):
+        super(MultimodalPrototypicalNet, self).__init__(
+            image_encoder, eds_encoder, device="cpu"
+        )
         self.image_encoder = image_encoder
         self.eds_encoder = eds_encoder
         self.device = device
@@ -60,11 +62,14 @@ class MultimodalPrototypicalNet(MultimodalBaseModel):
         # create prototypes by averaging encoding for each mode
         prototypes = []
         # encode the data points
-        for s_k, x_k, in support_group.items(): # x_k is now a dictionary {images: [], spectra: []}
+        for (
+            s_k,
+            x_k,
+        ) in support_group.items():  # x_k is now a dictionary {images: [], spectra: []}
             # support_group[s_k] = self.image_encoder(x_k)
             # calculate the prototype for each class
-            image_prototype = self.image_encoder(x_k['images']).mean(0)
-            spectral_prototype = self.eds_encoder(x_k['spectra']).mean(0)
+            image_prototype = self.image_encoder(x_k["images"]).mean(0)
+            spectral_prototype = self.eds_encoder(x_k["spectra"]).mean(0)
             prototypes.append(torch.concat((image_prototype, spectral_prototype)))
         prototypes = torch.stack(prototypes)
         encoded_query_images = self.image_encoder(image_queries)
@@ -73,4 +78,3 @@ class MultimodalPrototypicalNet(MultimodalBaseModel):
         # calculate a distance between each average and query point
         distances = -torch.cdist(query_set, prototypes)
         return distances
-
