@@ -31,6 +31,8 @@ class PrototypicalNet(BaseModel):
         super(PrototypicalNet, self).__init__(encoder, device="cpu")
         self.encoder = encoder
         self.device = device
+        self.to(self.device)
+        self.encoder.to(self.device)
 
     def forward(self, support_group, queries):
         # support group is a dictionary of support point tensors keyed by class, create prototypes
@@ -55,6 +57,8 @@ class MultimodalPrototypicalNet(MultimodalBaseModel):
         self.image_encoder = image_encoder
         self.eds_encoder = eds_encoder
         self.device = device
+        self.to(self.device)
+        self.image_encoder.to(self.device)
 
     def forward(self, support_group, image_queries, spectra_queries):
         # support group is a dictionary of support point tensors keyed by mode (images and spectra)
