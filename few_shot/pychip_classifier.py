@@ -17,10 +17,10 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 from .protonet import PrototypicalNet, MultimodalPrototypicalNet
 from .resnet import resnet18, resnet34, resnet50, resnet101, resnet152
-from .custom_colors import create_overlay
+from few_shot.custom_colors import create_overlay
 import torchvision.models as models
 import pretrained_microscopy_models as pmm
-from custom_colors import save_stats_plot
+from few_shot.custom_colors import save_stats_plot
 from torch import nn
 
 
