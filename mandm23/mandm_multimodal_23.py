@@ -109,14 +109,14 @@ plt.show()
 # generate support set
 classifier.support_genesis(support_dict=support_dict)
 
-# # predict
-# classifier.predict_multimodal(
-#     savepath=results_path, image_encoder='shufflenet', eds_encoder="raw", seed=75, filename='results_multimodal_small.csv'
-# )
+ # predict
+ classifier.predict_multimodal(
+     savepath=results_path, image_encoder='shufflenet', eds_encoder="raw", seed=75, filename='results_multimodal_small.csv'
+ )
 
-classifier.predict(
-    savepath=results_path, encoder='shufflenet', seed=75, filename='results_unimodal_small.csv'
-)
+# classifier.predict(
+#    savepath=results_path, encoder='shufflenet', seed=75, filename='results_unimodal_small.csv'
+#)
 
 classifier.color_image(savepath=results_path, img_name='results_unimodal_small.jpg', color_dict=color_dict)
 
